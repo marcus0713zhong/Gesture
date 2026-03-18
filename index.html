@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Annie & Friends - Gesture Navigation System</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        /* CSS Section: Gorgeous animated background and layout */
+        body {
+            margin: 0; padding: 0; height: 100vh;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            /* Animated gradient background */
+            background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+            background-size: 400% 400%;
+            animation: gradientBG 10s ease infinite;
+            color: white; font-family: 'Segoe UI', Tahoma, sans-serif;
+            overflow: hidden;
+        }
+
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        h1 { font-size: 2.2rem; text-shadow: 0 4px 10px rgba(0,0,0,0.3); margin-bottom: 30px; }
+
+        /* Requirement: Use of CLASS selector for the name group */
+        .name-container {
+            display: flex; 
+            flex-wrap: nowrap; /* Force names to stay in a SINGLE ROW */
+            justify-content: center;
+            align-items: center;
+            gap: 12px; 
+            width: 95%;
+            padding: 20px 0;
+        }
+
+        .person-card {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50px;
+            text-decoration: none;
+            color: white;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: all 0.3s ease; /* Smooth enlargement effect */
+            white-space: nowrap; /* Prevent names from wrapping internally */
+        }
+
+        /* Enlarge effect when a name is "active" or hovered */
+        .person-card.active {
+            transform: scale(1.3);
+            background: white;
+            color: #e73c7e;
+            box-shadow: 0 0 25px #fff;
+            border-color: white;
+            z-index: 10;
+        }
+
+        /* Requirement: Use of ID selector for the hint section */
+        #gesture-hint {
+            margin-top: 40px; padding: 20px 40px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 15px; text-align: center;
+            border-bottom: 4px solid #00ffcc;
+        }
+
+        /* UI elements for camera status and control */
+        #status-bar {
+            position: absolute; top: 10px; left: 10px;
+            font-size: 0.8rem; color: #00ffcc; background: rgba(0,0,0,0.6);
+            padding: 5px 12px; border-radius: 5px; z-index: 100;
+        }
+
+        #start-btn {
+            padding: 12px 30px; background: #00ffcc; border: none;
+            border-radius: 30px; font-weight: bold; cursor: pointer;
+            font-size: 1.1rem; margin-bottom: 20px; z-index: 100;
+            box-shadow: 0 4px 15px rgba(0,255,204,0.4);
+        }
+
+        /* Hidden video element used for background processing */
+        #input_video { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="status-bar">Status: Waiting for user to start camera...</div>
+
+    <button id="start-btn">Click to Start Magic</button>
+
+    <h1>Explore Their Guesture Worlds</h1>
+
+    <div class="name-container">
+        <a href="https://www.torontomu.ca/admissions/" class="person-card">Annie</a>
+        <a href="https://www.torontomu.ca/programs/" class="person-card">Berry</a>
+        <a href="https://www.torontomu.ca/about/" class="person-card">Lucie</a>
+        <a href="https://www.torontomu.ca/contact/" class="person-card">Xiaoming</a>
+        <a href="https://www.torontomu.ca/news-events/" class="person-card">Natalie</a>
+        <a href="https://www.torontomu.ca/graduate/" class="person-card">Karen</a>
+        <a href="https://www.torontomu.ca/international/" class="person-card">Rosie</a>
+    </div>
+
+    <div id="gesture-hint">
+        <p>Wave your <strong>HAND</strong> horizontally to select a name.</p>
+        <p>Make a <strong>FIST</strong> to confirm and enter their world.</p>
+        <span style="font-style: italic; color: #00ffcc;">Enjoy this gesture-controlled navigation!</span>
+    </div>
+
+    <video id="input_video"></video>
+
+    <script>
+        const cards = document.querySelectorAll('.person-card');
+        const videoElement = document.getElementById('input_video');
+        const startBtn = document.getElementById('start-btn');
+        const statusBar = document.getElementById('status-bar');
+
+        let cameraActive = false;
+
+        // Logic to process gesture recognition results
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandedness) {
+                cameraActive = true;
+                
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const label = results.multiHandedness[i].label; // Detect 'Left' or 'Right'
+
+                    statusBar.innerText = `Hand Tracking: Active (${label} hand)`;
+
+                    // --- FIX: Mirroring Correction ---
+                    // By default, move hand left -> X decreases. Move right -> X increases.
+                    // We use (1 - X) to flip the coordinate so it matches intuitive movement.
+                    const flippedX = 1 - landmarks[8].x; 
+                    
+                    // Map the 0.0 - 1.0 range to our 7 cards (index 0 to 6)
+                    const index = Math.floor(flippedX * cards.length);
+                    
+                    // Visual feedback: Highlight the selected name
+                    cards.forEach((card, idx) => {
+                        if(idx === index) card.classList.add('active');
+                        else card.classList.remove('active');
+                    });
+
+                    // --- FIST DETECTION LOGIC ---
+                    // A "fist" is detected if the fingertips (index: 8, middle: 12) 
+                    // are lower than their respective joints (index: 5, middle: 9)
+                    const isFist = landmarks[8].y > landmarks[5].y && landmarks[12].y > landmarks[9].y;
+
+                    if (isFist && cards[index]) {
+                        statusBar.innerText = "Fist detected! Entering...";
+                        window.location.href = cards[index].href;
+                    }
+                }
+            } else {
+                statusBar.innerText = "Status: No hand detected.";
+            }
+        }
+
+        // Initialize the MediaPipe Hands model
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        // Setup the camera utility
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+
+        // Requirement: JavaScript Event Handler for the Start Button
+        startBtn.addEventListener('click', () => {
+            camera.start();
+            startBtn.style.display = 'none'; // Hide button once camera starts
+            statusBar.innerText = "Status: Initializing hand tracking...";
+        });
+
+        // Back-up Event Handler: Manual click for testing
+        cards.forEach(card => {
+            card.addEventListener('click', () => {
+                console.log("Manual navigation to: " + card.innerText);
+            });
+        });
+    </script>
+</body>
+</html>
