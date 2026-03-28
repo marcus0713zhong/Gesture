@@ -128,7 +128,7 @@
         hands.onResults((results) => {
             if (canControl && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 videoActive = true;
-                targetRotationY = (0.5 - e.clientX / window.innerWidth) * Math.PI * 2.5;
+                targetRotationY = - (results.multiHandLandmarks[0][8].x - 0.5) * Math.PI * 2.5;
             }
         });
 
