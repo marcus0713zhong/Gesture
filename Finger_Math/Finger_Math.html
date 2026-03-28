@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Finger Counting Fun</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            /* Playful pastel background */
+            background: #e0f7fa; 
+            font-family: 'Comic Sans MS', 'Arial Rounded MT Bold', sans-serif;
+            user-select: none;
+        }
+        #video-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 280px;
+            height: 210px;
+            border: 8px solid #fff;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            z-index: 10;
+            transform: rotate(-2deg); /* Playful tilt */
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror view */
+        }
+        canvas#display {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        .hint {
+            position: absolute;
+            top: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.9);
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff6b6b;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            z-index: 5;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="hint">Show your ✨magic hands✨ to the camera!</div>
+    
+    <div id="video-container">
+        <video id="input_video"></video>
+    </div>
+    
+    <canvas id="display"></canvas>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('display');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        // English word mapping
+        const numberWords = {
+            1: "One", 2: "Two", 3: "Three", 4: "Four", 
+            5: "Five", 6: "Six", 7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten"
+        };
+
+        // Playful background colors
+        const bgColors = ["#FFADAD", "#FFD6A5", "#FDFFB6", "#CAFFBF", "#9BF6FF", "#A0C4FF", "#BDB2FF", "#FFC6FF", "#FFFFFC"];
+        
+        let lastDetectedCount = -1;
+        let animationScale = 1;
+        let scaleDirection = 0.015;
+        let particles = [];
+
+        // Text-to-Speech Setup
+        const synth = window.speechSynthesis;
+        function speakNumber(text) {
+            // Cancel any ongoing speech
+            synth.cancel(); 
+            const utterThis = new SpeechSynthesisUtterance(text);
+            utterThis.lang = 'en-US'; // Set to American English
+            utterThis.rate = 0.9;     // Slightly slower for kids
+            utterThis.pitch = 1.2;    // Slightly higher pitch for fun
+            synth.speak(utterThis);
+        }
+
+        // Particle class for sparkle effect
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 10 + 5;
+                this.speedX = Math.random() * 3 - 1.5;
+                this.speedY = Math.random() * 3 - 1.5;
+                this.color = `hsl(${Math.random() * 360}, 100%, 70%)`;
+                this.life = 100;
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= 2;
+                if(this.size > 0.2) this.size -= 0.1;
+            }
+            draw() {
+                canvasCtx.fillStyle = this.color;
+                canvasCtx.beginPath();
+                canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                canvasCtx.fill();
+            }
+        }
+
+        function onResults(results) {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+
+            let fingerCount = 0;
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                results.multiHandLandmarks.forEach((landmarks) => {
+                    // Standard finger counting logic
+                    const fingerTips = [8, 12, 16, 20];
+                    fingerTips.forEach(tip => {
+                        if (landmarks[tip].y < landmarks[tip - 2].y) fingerCount++;
+                    });
+                    
+                    // Thumb logic
+                    const thumbTip = landmarks[4];
+                    const wrist = landmarks[0];
+                    const pinkyBase = landmarks[17];
+                    if (Math.abs(thumbTip.x - pinkyBase.x) > Math.abs(landmarks[3].x - pinkyBase.x)) {
+                        fingerCount++;
+                    }
+                });
+            }
+
+            // Cap at 10 for the display
+            if (fingerCount > 10) fingerCount = 10;
+
+            // Trigger speech when the count changes
+            if (fingerCount > 0 && fingerCount !== lastDetectedCount) {
+                speakNumber(numberWords[fingerCount]);
+                
+                // Add burst particles on change
+                for(let i=0; i<15; i++) {
+                    particles.push(new Particle(canvasElement.width/2, canvasElement.height/2));
+                }
+            }
+            lastDetectedCount = fingerCount;
+
+            drawScene(fingerCount);
+        }
+
+        function drawScene(count) {
+            // 1. Draw Background
+            const bgColor = count > 0 ? bgColors[count % bgColors.length] : "#e0f7fa";
+            canvasCtx.fillStyle = bgColor;
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // 2. Update and Draw Particles
+            particles.forEach((p, index) => {
+                if(p.life <= 0) {
+                    particles.splice(index, 1);
+                } else {
+                    p.update();
+                    p.draw();
+                }
+            });
+
+            // 3. Simple Breathing Animation
+            animationScale += scaleDirection;
+            if (animationScale > 1.08 || animationScale < 0.92) scaleDirection *= -1;
+
+            if (count > 0) {
+                canvasCtx.save();
+                canvasCtx.translate(canvasElement.width / 2, canvasElement.height / 2);
+                canvasCtx.scale(animationScale, animationScale);
+                
+                // 4. Draw Big Cartoon Number
+                const fontSizeNum = Math.min(canvasElement.width, canvasElement.height) * 0.4;
+                canvasCtx.font = `bold ${fontSizeNum}px 'Comic Sans MS'`;
+                canvasCtx.textAlign = "center";
+                canvasCtx.textBaseline = "middle";
+
+                // Number Gradient Fill
+                const gradient = canvasCtx.createLinearGradient(0, -fontSizeNum/2, 0, fontSizeNum/2);
+                gradient.addColorStop(0, "#ff9a9e");
+                gradient.addColorStop(0.5, "#fad0c4");
+                gradient.addColorStop(1, "#fed6e3");
+                canvasCtx.fillStyle = gradient;
+
+                // Thick white stroke for cartoon look
+                canvasCtx.strokeStyle = "#fff";
+                canvasCtx.lineWidth = 20;
+                canvasCtx.strokeText(count, 0, -50);
+                canvasCtx.fillText(count, 0, -50);
+
+                // 5. Draw English Word
+                const fontSizeWord = fontSizeNum * 0.3;
+                canvasCtx.font = `bold ${fontSizeWord}px 'Arial Rounded MT Bold'`;
+                canvasCtx.fillStyle = "#333"; // Dark grey for contrast
+                canvasCtx.strokeStyle = "#fff";
+                canvasCtx.lineWidth = 8;
+                canvasCtx.strokeText(numberWords[count], 0, fontSizeNum/2 - 20);
+                canvasCtx.fillText(numberWords[count], 0, fontSizeNum/2 - 20);
+                
+                canvasCtx.restore();
+
+            } else {
+                // Idle state text
+                canvasCtx.fillStyle = "#888";
+                canvasCtx.font = "30px Arial";
+                canvasCtx.textAlign = "center";
+                canvasCtx.fillText("Wait for your hands...", canvasElement.width/2, canvasElement.height/2);
+            }
+        }
+
+        // --- MediaPipe and Camera Setup ---
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
