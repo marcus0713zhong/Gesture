@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>2d Map - Toronto Gesture Control</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #121212; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        #map { width: 100vw; height: 100vh; position: absolute; }
+        #video-container {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 240px; height: 180px; border: 3px solid #4285F4; border-radius: 12px;
+            overflow: hidden; transform: scaleX(-1); z-index: 100; box-shadow: 0 8px 25px rgba(0,0,0,0.5);
+        }
+        #webcam { width: 100%; height: 100%; object-fit: cover; }
+        #canvas-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .ui-panel {
+            position: absolute; top: 20px; left: 20px; background: rgba(255, 255, 255, 0.95);
+            padding: 12px 25px; border-radius: 35px; z-index: 10; border-left: 6px solid #4285F4;
+        }
+        #status { font-weight: bold; font-size: 1.1em; color: #333; }
+        .hint { font-size: 0.85em; color: #555; margin-top: 4px; }
+        .bold { color: #4285F4; font-weight: 700; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <div id="status">Initializing...</div>
+        <div class="hint">
+            Location: <span class="bold">Toronto</span> | 
+            <span class="bold">🖐 Palm:</span> Pan | 
+            <span class="bold">☝️ 1:</span> Zoom In | 
+            <span class="bold">✌️ 2:</span> Zoom Out
+        </div>
+    </div>
+
+    <div id="map"></div>
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="canvas-overlay"></canvas>
+    </div>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC7udB6znOI22eDk7RI5zXbUoAN9dDDHKI&callback=initMap" async defer></script>
+
+    <script>
+        let map;
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('canvas-overlay');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusDiv = document.getElementById('status');
+
+        let lastX = null, lastY = null;
+        let zoomDirection = 0; 
+
+        function initMap() {
+            // Initializing at Toronto coordinates
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: { lat: 43.6532, lng: -79.3832 }, 
+                zoom: 12,
+                gestureHandling: "none",
+                disableDefaultUI: true,
+                minZoom: 2, 
+                maxZoom: 19
+            });
+            
+            // Continuous Zoom Loop: Runs twice per second (every 500ms)
+            setInterval(() => {
+                if (zoomDirection !== 0) {
+                    const currentZoom = map.getZoom();
+                    // Each step is 1 full zoom level
+                    map.setZoom(currentZoom + zoomDirection);
+                }
+            }, 500); 
+
+            setupAI();
+        }
+
+        function detectGesture(landmarks) {
+            const indexUp = landmarks[8].y < landmarks[6].y;
+            const middleUp = landmarks[12].y < landmarks[10].y;
+            const ringUp = landmarks[16].y < landmarks[14].y;
+            const pinkyUp = landmarks[20].y < landmarks[18].y;
+
+            // Palm (4 fingers) -> Pan
+            if (indexUp && middleUp && ringUp && pinkyUp) return "PALM";
+            // Two Fingers -> Zoom Out
+            if (indexUp && middleUp && !ringUp && !pinkyUp) return "TWO_FINGERS";
+            // One Finger -> Zoom In
+            if (indexUp && !middleUp && !ringUp && !pinkyUp) return "ONE_FINGER";
+
+            return "IDLE";
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#4285F4', lineWidth: 2});
+
+                const gesture = detectGesture(landmarks);
+
+                if (gesture === "PALM") {
+                    statusDiv.innerHTML = "Status: <span style='color:#4285F4'>🖐 PANNING</span>";
+                    zoomDirection = 0;
+                    const center = landmarks[9];
+                    if (lastX !== null) {
+                        map.panBy((center.x - lastX) * -1800, (center.y - lastY) * 1800);
+                    }
+                    lastX = center.x; lastY = center.y;
+                } 
+                else if (gesture === "ONE_FINGER") {
+                    statusDiv.innerHTML = "Status: <span style='color:#34A853'>☝️ ZOOMING IN (2x/sec)</span>";
+                    zoomDirection = 1; 
+                    lastX = lastY = null;
+                }
+                else if (gesture === "TWO_FINGERS") {
+                    statusDiv.innerHTML = "Status: <span style='color:#EA4335'>✌️ ZOOMING OUT (2x/sec)</span>";
+                    zoomDirection = -1;
+                    lastX = lastY = null;
+                }
+                else {
+                    statusDiv.innerHTML = "Status: <span style='color:#999'>✋ IDLE</span>";
+                    zoomDirection = 0;
+                    lastX = lastY = null;
+                }
+            } else {
+                zoomDirection = 0;
+                lastX = lastY = null;
+            }
+            canvasCtx.restore();
+        }
+
+        function setupAI() {
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            hands.setOptions({ 
+                maxNumHands: 1, 
+                modelComplexity: 1, 
+                minDetectionConfidence: 0.8, 
+                minTrackingConfidence: 0.8 
+            });
+            hands.onResults(onResults);
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
+                    await hands.send({image: videoElement});
+                },
+                width: 640, height: 480
+            });
+            camera.start().then(() => statusDiv.innerText = "System Live - Toronto");
+        }
+    </script>
+</body>
+</html>
