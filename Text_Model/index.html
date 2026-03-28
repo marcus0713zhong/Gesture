@@ -138,7 +138,7 @@
         });
 
         window.addEventListener('mousemove', (e) => {
-            if(canControl && !videoActive) targetRotationY = (e.clientX / window.innerWidth - 0.5) * Math.PI * 2.5;
+            if(canControl && !videoActive) targetRotationY = - (e.clientX / window.innerWidth - 0.5) * Math.PI * 2.5;
         });
 
         initThree();
