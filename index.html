@@ -20,6 +20,7 @@
             animation: gradientBG 10s ease infinite;
             color: white; font-family: 'Segoe UI', Tahoma, sans-serif;
             overflow: hidden;
+            position: relative; /* 确保 footer 绝对定位基准 */
         }
 
         @keyframes gradientBG {
@@ -28,7 +29,7 @@
             100% { background-position: 0% 50%; }
         }
 
-        h1 { font-size: 2.2rem; text-shadow: 0 4px 10px rgba(0,0,0,0.3); margin-bottom: 30px; }
+        h1 { font-size: 2.2rem; text-shadow: 0 4px 10px rgba(0,0,0,0.3); margin-bottom: 30px; text-align: center; }
 
         /* Requirement: Use of CLASS selector for the name group */
         .name-container {
@@ -77,13 +78,43 @@
             position: absolute; top: 10px; left: 10px;
             font-size: 0.8rem; color: #00ffcc; background: rgba(0,0,0,0.6);
             padding: 5px 12px; border-radius: 5px; z-index: 100;
+            opacity: 0; /* 初始隐藏 */
+            transition: opacity 1s ease; /* 渐显动画 */
         }
 
         #start-btn {
             padding: 12px 30px; background: #00ffcc; border: none;
             border-radius: 30px; font-weight: bold; cursor: pointer;
-            font-size: 1.1rem; margin-bottom: 20px; z-index: 100;
+            font-size: 1.1rem; z-index: 100;
             box-shadow: 0 4px 15px rgba(0,255,204,0.4);
+            transition: opacity 0.5s ease; /* 按钮渐隐动画 */
+            position: absolute; /* 绝对定位，避免消失时引发页面抖动 */
+        }
+
+        /* 主界面的容器，用于整体控制渐隐渐现 */
+        #main-ui {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            opacity: 0; /* 初始隐藏 */
+            pointer-events: none; /* 隐藏时不可点击 */
+            transition: opacity 1s ease; /* 渐显动画，持续1秒 */
+        }
+
+        /* 激活后的主界面状态 */
+        #main-ui.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* 底部版权信息：修改为常驻显示 */
+        #footer {
+            position: absolute;
+            bottom: 15px;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.7);
+            letter-spacing: 0.5px;
+            /* 移除了 opacity: 0 和 transition，让它一开始就可见 */
         }
 
         /* Hidden video element used for background processing */
@@ -96,23 +127,27 @@
 
     <button id="start-btn">Click to Start Magic</button>
 
-    <h1>Explore These Guesture Worlds</h1>
+    <div id="main-ui">
+        <h1>Explore These Gesture Worlds</h1>
 
-    <div class="name-container">
-        <a href="Text_Model/index.html" class="person-card">3D Text</a>
-        <a href="2D_Map/2D_Map.html" class="person-card">2D Map</a>
-        <a href="Finger_Math/Finger_Math.html" class="person-card">Finger Math</a>
-        <a href="Hand_Rehab/Hand_Rehab.html" class="person-card">Hand Rehab</a>
-        <a href="Neon_Maze/Neon_Maze.html" class="person-card">Neon Maze</a>
-        <a href="Cyber_Rain/Cyber_Rain.html" class="person-card">Cyber Rain</a>
-        <a href="Behind_The_Web/Behind_The_Web.html" class="person-card">Behind The Web</a>
+        <div class="name-container">
+            <a href="Text_Model/index.html" class="person-card">3D Text</a>
+            <a href="2D_Map/2D_Map.html" class="person-card">2D Map</a>
+            <a href="Finger_Math/Finger_Math.html" class="person-card">Finger Math</a>
+            <a href="Hand_Rehab/Hand_Rehab.html" class="person-card">Hand Rehab</a>
+            <a href="Neon_Maze/Neon_Maze.html" class="person-card">Neon Maze</a>
+            <a href="Cyber_Rain/Cyber_Rain.html" class="person-card">Cyber Rain</a>
+            <a href="Behind_The_Web/Behind_The_Web.html" class="person-card">Behind The Web</a>
+        </div>
+
+        <div id="gesture-hint">
+            <p>Wave your <strong>HAND</strong> horizontally to select a button.</p>
+            <p>Make a <strong>FIST</strong> to confirm and enter the world.</p>
+            <span style="font-style: italic; color: #00ffcc;">Enjoy this gesture-controlled navigation!</span>
+        </div>
     </div>
 
-    <div id="gesture-hint">
-        <p>Wave your <strong>HAND</strong> horizontally to select a button.</p>
-        <p>Make a <strong>FIST</strong> to confirm and enter the world.</p>
-        <span style="font-style: italic; color: #00ffcc;">Enjoy this gesture-controlled navigation!</span>
-    </div>
+    <div id="footer">© 2026 Xiaoming (Marcus) Zhong. All rights reserved.</div>
 
     <video id="input_video"></video>
 
@@ -121,6 +156,7 @@
         const videoElement = document.getElementById('input_video');
         const startBtn = document.getElementById('start-btn');
         const statusBar = document.getElementById('status-bar');
+        const mainUi = document.getElementById('main-ui');
 
         let cameraActive = false;
 
@@ -136,8 +172,6 @@
                     statusBar.innerText = `Hand Tracking: Active (${label} hand)`;
 
                     // --- FIX: Mirroring Correction ---
-                    // By default, move hand left -> X decreases. Move right -> X increases.
-                    // We use (1 - X) to flip the coordinate so it matches intuitive movement.
                     const flippedX = 1 - landmarks[8].x; 
                     
                     // Map the 0.0 - 1.0 range to our 7 cards (index 0 to 6)
@@ -150,8 +184,6 @@
                     });
 
                     // --- FIST DETECTION LOGIC ---
-                    // A "fist" is detected if the fingertips (index: 8, middle: 12) 
-                    // are lower than their respective joints (index: 5, middle: 9)
                     const isFist = landmarks[8].y > landmarks[5].y && landmarks[12].y > landmarks[9].y;
 
                     if (isFist && cards[index]) {
@@ -187,11 +219,25 @@
             height: 720
         });
 
-        // Requirement: JavaScript Event Handler for the Start Button
+        // 动画控制：点击开始按钮后的逻辑
         startBtn.addEventListener('click', () => {
+            // 1. 启动相机
             camera.start();
-            startBtn.style.display = 'none'; // Hide button once camera starts
             statusBar.innerText = "Status: Initializing hand tracking...";
+            
+            // 2. 按钮渐隐
+            startBtn.style.opacity = '0';
+            startBtn.style.pointerEvents = 'none';
+
+            // 3. 等待按钮渐隐完成 (500ms)，然后显示主界面并触发渐显
+            setTimeout(() => {
+                startBtn.style.display = 'none'; // 从文档流中移除按钮
+                
+                // 给主界面和状态栏添加样式使其渐显
+                mainUi.classList.add('visible');
+                statusBar.style.opacity = '1';
+                // （已删除控制 footer 渐显的代码）
+            }, 500);
         });
 
         // Back-up Event Handler: Manual click for testing
