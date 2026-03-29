@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optical Gesture Matrix - Multi-Command</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <style>
+        :root {
+            var(--neon-blue): #0ff;
+            --neon-blue: #0ff;          
+            --neon-blue-light: #6ff;    
+            --neon-blue-dark: #00ccff;  
+            --bg-color: #00010c;       
+            --panel-bg: rgba(0, 15, 30, 0.7); 
+            --overlay-color: rgba(0, 20, 40, 0.5); 
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: var(--neon-blue);
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #matrix-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1; 
+            opacity: 0.6; 
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 1200px;
+            z-index: 1; 
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px var(--neon-blue);
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2rem;
+            letter-spacing: 2px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+        }
+
+        .video-section {
+            flex: 2;
+            position: relative;
+            border: 2px solid var(--neon-blue);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+            background: #000;
+        }
+
+        .input_video {
+            display: none; 
+        }
+
+        .output_canvas {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--overlay-color);
+            pointer-events: none; 
+        }
+
+        .data-section {
+            flex: 1;
+            background: var(--panel-bg);
+            border: 1px solid var(--neon-blue);
+            padding: 20px;
+            box-shadow: inset 0 0 25px rgba(0, 255, 255, 0.1), 0 0 15px rgba(0, 255, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            backdrop-filter: blur(3px);
+        }
+
+        .edu-card {
+            border-bottom: 1px dashed var(--neon-blue);
+            padding-bottom: 15px;
+        }
+
+        .edu-card h3 {
+            color: var(--neon-blue-light);
+            margin-top: 0;
+            text-shadow: 0 0 5px var(--neon-blue);
+        }
+
+        .edu-card p {
+            font-size: 0.85rem;
+            line-height: 1.4;
+            color: #ddd;
+            margin-bottom: 8px;
+        }
+
+        .command-list {
+            font-size: 0.85rem;
+            color: #ff00ff; /* 使用粉色突出命令说明 */
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .command-list li { margin-bottom: 4px; }
+
+        .telemetry {
+            flex-grow: 1;
+        }
+
+        .telemetry h3 {
+             color: var(--neon-blue-light);
+             text-shadow: 0 0 5px var(--neon-blue);
+        }
+
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #113355; 
+            padding-bottom: 4px;
+        }
+
+        .label { color: #88aa88; font-size: 0.9rem;} 
+        .value { 
+            font-weight: bold; 
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px var(--neon-blue);
+            font-size: 0.9rem;
+        }
+
+        .status-box {
+            margin-top: 15px;
+            padding: 15px;
+            border: 2px solid var(--neon-blue);
+            text-align: center;
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: var(--neon-blue);
+            transition: all 0.2s;
+            text-shadow: 0 0 8px var(--neon-blue);
+            min-height: 28px;
+        }
+
+        .status-active {
+            background-color: #0088ff; 
+            color: #fff;
+            border-color: #fff;
+            box-shadow: 0 0 30px #00aaff;
+            text-shadow: none;
+        }
+
+        .scanline {
+            width: 100%;
+            height: 100px;
+            background: linear-gradient(0deg, rgba(0,255,255,0) 0%, rgba(0,255,255,0.2) 50%, rgba(0,255,255,0) 100%);
+            opacity: 0.6;
+            position: absolute;
+            bottom: 100%;
+            animation: scanline 4s linear infinite;
+            pointer-events: none;
+            z-index: 2; 
+        }
+
+        @keyframes scanline {
+            0% { bottom: 100%; }
+            100% { bottom: -100px; }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="matrix-bg"></canvas>
+
+    <div class="main-content">
+        <header>
+            <h1>OPTICAL GESTURE MATRIX</h1>
+            <div>SYSTEM STATUS: <span style="color: var(--neon-blue-light); text-shadow: 0 0 8px var(--neon-blue)">ONLINE</span></div>
+        </header>
+
+        <div class="container">
+            <div class="video-section">
+                <div class="scanline"></div>
+                <div class="canvas-overlay"></div> 
+                <video class="input_video" autoplay playsinline></video>
+                <canvas class="output_canvas" width="1280" height="720"></canvas>
+            </div>
+
+            <div class="data-section">
+                <div class="edu-card">
+                    <h3>[ HOW IT WORKS ]</h3>
+                    <p>
+                        By calculating the mathematical distance between specific points (e.g., thumb tip and index finger tip), 
+                        the computer translates your physical movement into digital commands. No gloves required.
+                    </p>
+                    <ul class="command-list">
+                        <li>▶ <b>INDEX + THUMB:</b> INITIATE SCAN</li>
+                        <li>▶ <b>MIDDLE + THUMB:</b> ACCESS GRANTED</li>
+                        <li>▶ <b>PINKY + THUMB:</b> SYSTEM OVERRIDE</li>
+                    </ul>
+                </div>
+
+                <div class="telemetry">
+                    <h3>[ LIVE TELEMETRY ]</h3>
+                    <div class="data-row">
+                        <span class="label">Index ↔ Thumb (Δ):</span>
+                        <span class="value" id="val-dist-index">0.000</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="label">Middle ↔ Thumb (Δ):</span>
+                        <span class="value" id="val-dist-middle">0.000</span>
+                    </div>
+                    <div class="data-row">
+                        <span class="label">Pinky ↔ Thumb (Δ):</span>
+                        <span class="value" id="val-dist-pinky">0.000</span>
+                    </div>
+                    
+                    <div class="status-box" id="gesture-status">
+                        STANDBY
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /*******************************************************
+         * 1. 背景矩阵代码 (保持不变)
+         *******************************************************/
+        const matrixCanvas = document.getElementById('matrix-bg');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        function resizeMatrix() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeMatrix);
+        resizeMatrix();
+
+        const characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZアイウエオカキクケコサシスセソタチツテトナニヌネノ';
+        const fontSize = 16;
+        let columns = 0;
+        let drops = [];
+
+        function initDrops() {
+            columns = Math.floor(matrixCanvas.width / fontSize);
+            drops = [];
+            for (let i = 0; i < columns; i++) { drops[i] = Math.random() * -matrixCanvas.height; }
+        }
+        initDrops();
+        window.addEventListener('resize', initDrops);
+
+        function drawMatrix() {
+            matrixCtx.fillStyle = 'rgba(0, 1, 12, 0.05)';
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+            matrixCtx.font = fontSize + 'px monospace';
+            for (let i = 0; i < drops.length; i++) {
+                const text = characters.charAt(Math.floor(Math.random() * characters.length));
+                const yPos = drops[i] * fontSize;
+                if (drops[i] < 3) matrixCtx.fillStyle = '#ccffff'; 
+                else if (drops[i] < 15) matrixCtx.fillStyle = '#00ffff'; 
+                else matrixCtx.fillStyle = '#0055ff'; 
+                
+                matrixCtx.fillText(text, i * fontSize, yPos);
+                if (yPos > matrixCanvas.height && Math.random() > 0.975) drops[i] = 0;
+                drops[i]++;
+            }
+        }
+        setInterval(drawMatrix, 35);
+
+
+        /*******************************************************
+         * 2. 核心手势逻辑与绘图
+         *******************************************************/
+        const videoElement = document.querySelector('.input_video');
+        const canvasElement = document.querySelector('.output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        const valDistIndex = document.getElementById('val-dist-index');
+        const valDistMiddle = document.getElementById('val-dist-middle');
+        const valDistPinky = document.getElementById('val-dist-pinky');
+        const gestureStatus = document.getElementById('gesture-status');
+
+        function calculateDistance(point1, point2) {
+            return Math.sqrt(Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2));
+        }
+
+        function drawLightningArc(ctx, startPoint, endPoint, color) {
+            const numSegments = 6;
+            const deviation = 15; 
+            ctx.save();
+            ctx.shadowBlur = 30; 
+            ctx.shadowColor = color; 
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = color; 
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            ctx.beginPath();
+            ctx.moveTo(startPoint.x * canvasElement.width, startPoint.y * canvasElement.height);
+
+            for (let i = 1; i <= numSegments; i++) {
+                const ratio = i / numSegments;
+                const x = startPoint.x * canvasElement.width + (endPoint.x - startPoint.x) * canvasElement.width * ratio;
+                const y = startPoint.y * canvasElement.height + (endPoint.y - startPoint.y) * canvasElement.height * ratio;
+                
+                if (i > 0 && i < numSegments) {
+                    const offset = (Math.random() - 0.5) * deviation;
+                    ctx.lineTo(x + offset, y + offset);
+                } else {
+                    ctx.lineTo(endPoint.x * canvasElement.width, endPoint.y * canvasElement.height);
+                }
+            }
+            ctx.stroke();
+            
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#fff'; 
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // --- 新增：全局状态管理变量 ---
+        const PINCH_THRESHOLD = 0.05; // 捏合触发阈值
+        const LIGHTNING_DURATION = 3000; // 闪电持续时间(毫秒)
+        
+        // 记录哪个手指被激活 (8:食指, 12:中指, 20:小指, null:无)
+        let activeTargetNode = null; 
+        // 记录闪电应该在何时消失的时间戳
+        let lightningExpireTimestamp = 0;
+        
+        // 记录各个手指当前的物理状态 (true=正在捏合，false=松开)
+        // 用于边缘检测，防止一直捏着不断刷新倒计时
+        let physicalStates = { 
+            index: false, 
+            middle: false, 
+            pinky: false 
+        };
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    
+                    // 1. 画基础连线和发光点
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ccff', lineWidth: 1.5}); 
+                    canvasCtx.save();
+                    canvasCtx.shadowBlur = 15; 
+                    canvasCtx.shadowColor = '#00ffff'; 
+                    drawLandmarks(canvasCtx, landmarks, {color: '#00ffff', lineWidth: 2, radius: 3.5}); 
+                    canvasCtx.restore();
+
+                    // 获取关键点
+                    const thumbTip = landmarks[4];
+                    const indexTip = landmarks[8];
+                    const middleTip = landmarks[12];
+                    const pinkyTip = landmarks[20];
+
+                    // 计算距离
+                    const distIndex = calculateDistance(indexTip, thumbTip);
+                    const distMiddle = calculateDistance(middleTip, thumbTip);
+                    const distPinky = calculateDistance(pinkyTip, thumbTip);
+
+                    // 更新面板数据
+                    valDistIndex.innerText = distIndex.toFixed(3);
+                    valDistMiddle.innerText = distMiddle.toFixed(3);
+                    valDistPinky.innerText = distPinky.toFixed(3);
+
+                    // --- 核心逻辑：触发判定与定时器 ---
+                    const now = Date.now();
+
+                    // 检查食指
+                    if (distIndex < PINCH_THRESHOLD) {
+                        if (!physicalStates.index) { // 只有刚捏下的一瞬间触发
+                            activeTargetNode = 8;
+                            lightningExpireTimestamp = now + LIGHTNING_DURATION;
+                            physicalStates.index = true;
+                        }
+                    } else { physicalStates.index = false; }
+
+                    // 检查中指
+                    if (distMiddle < PINCH_THRESHOLD) {
+                        if (!physicalStates.middle) {
+                            activeTargetNode = 12;
+                            lightningExpireTimestamp = now + LIGHTNING_DURATION;
+                            physicalStates.middle = true;
+                        }
+                    } else { physicalStates.middle = false; }
+
+                    // 检查小指
+                    if (distPinky < PINCH_THRESHOLD) {
+                        if (!physicalStates.pinky) {
+                            activeTargetNode = 20;
+                            lightningExpireTimestamp = now + LIGHTNING_DURATION;
+                            physicalStates.pinky = true;
+                        }
+                    } else { physicalStates.pinky = false; }
+
+                    // --- 检查是否超时 ---
+                    if (now > lightningExpireTimestamp) {
+                        activeTargetNode = null; // 超过3秒，清除闪电目标
+                    }
+
+                    // --- 渲染逻辑 ---
+                    let currentStatusText = "TRACKING ACTIVE";
+                    let isCommandActive = false;
+
+                    // 如果有激活的目标，则画特定的节点样式和闪电
+                    if (activeTargetNode !== null) {
+                        isCommandActive = true;
+                        const targetPoint = landmarks[activeTargetNode];
+                        
+                        // 画闪电
+                        drawLightningArc(canvasCtx, targetPoint, thumbTip, '#00ffff');
+
+                        // 增强激活的手指尖和拇指尖 (亮粉色核心)
+                        [targetPoint, thumbTip].forEach(point => {
+                            canvasCtx.save();
+                            canvasCtx.shadowBlur = 25;
+                            canvasCtx.shadowColor = '#00ffff';
+                            // 外圆
+                            canvasCtx.beginPath();
+                            canvasCtx.arc(point.x * canvasElement.width, point.y * canvasElement.height, 8, 0, 2 * Math.PI);
+                            canvasCtx.fillStyle = '#00ffff';
+                            canvasCtx.fill();
+                            // 粉核
+                            canvasCtx.beginPath();
+                            canvasCtx.arc(point.x * canvasElement.width, point.y * canvasElement.height, 4, 0, 2 * Math.PI);
+                            canvasCtx.fillStyle = '#ff00ff';
+                            canvasCtx.fill();
+                            canvasCtx.restore();
+                        });
+
+                        // 更新面板文字
+                        if (activeTargetNode === 8) currentStatusText = "CMD 01: INITIATE SCAN";
+                        if (activeTargetNode === 12) currentStatusText = "CMD 02: ACCESS GRANTED";
+                        if (activeTargetNode === 20) currentStatusText = "CMD 03: SYSTEM OVERRIDE";
+                    }
+
+                    // 更新底部状态框
+                    gestureStatus.innerText = currentStatusText;
+                    if (isCommandActive) {
+                        gestureStatus.classList.add('status-active');
+                    } else {
+                        gestureStatus.classList.remove('status-active');
+                    }
+                }
+            } else {
+                // 未检测到手
+                valDistIndex.innerText = "0.000";
+                valDistMiddle.innerText = "0.000";
+                valDistPinky.innerText = "0.000";
+                gestureStatus.innerText = "STANDBY";
+                gestureStatus.classList.remove('status-active');
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1, 
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+        camera.start();
+    </script>
+</body>
+</html>
