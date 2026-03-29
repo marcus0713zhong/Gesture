@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Rehab Pro</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --primary: #2ecc71;
+            --accent: #3498db;
+            --bg: #f8f9fa;
+        }
+
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            background: #2c3e50;
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        canvas { transform: scaleX(-1); width: 100%; height: 100%; }
+
+        .dashboard {
+            display: flex;
+            gap: 60px;
+            margin-top: 30px;
+            background: white;
+            padding: 25px 80px;
+            border-radius: 100px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+            position: relative;
+        }
+
+        .stat-item { text-align: center; position: relative; }
+        .stat-value { font-size: 3rem; font-weight: 800; color: #2c3e50; min-width: 60px; }
+        .stat-label { font-size: 0.8rem; text-transform: uppercase; color: #7f8c8d; letter-spacing: 1px; }
+
+        /* 上升符号动画 */
+        #up-arrow {
+            position: absolute;
+            right: -30px;
+            top: 0;
+            color: var(--primary);
+            font-size: 2rem;
+            opacity: 0;
+            transition: all 0.4s ease;
+        }
+        .bounce-up { animation: bounceUp 0.6s ease-out; }
+
+        @keyframes bounceUp {
+            0% { opacity: 0; transform: translateY(10px); }
+            50% { opacity: 1; transform: translateY(-10px); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+
+        /* 弹窗样式 */
+        #alert-overlay {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            color: #2c3e50;
+            padding: 40px 80px;
+            border-radius: 30px;
+            font-size: 28px;
+            font-weight: bold;
+            display: none;
+            z-index: 1000;
+            text-align: center;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+            border: 4px solid var(--primary);
+        }
+
+        .thumb-icon { font-size: 80px; display: block; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2 style="color: #7f8c8d; font-weight: 400;">Hand Recovery Session</h2>
+
+    <div id="container">
+        <video id="input_video" style="display:none"></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+    </div>
+
+    <div id="alert-overlay"></div>
+
+    <div class="dashboard">
+        <div class="stat-item">
+            <div id="rep-count" class="stat-value">0</div>
+            <div id="up-arrow">↑</div>
+            <div class="stat-label">Reps</div>
+        </div>
+        <div class="stat-item">
+            <div id="sets-left" class="stat-value" style="color: var(--accent);">4</div>
+            <div class="stat-label">Sets Left</div>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const repDisplay = document.getElementById('rep-count');
+        const setDisplay = document.getElementById('sets-left');
+        const alertBox = document.getElementById('alert-overlay');
+        const upArrow = document.getElementById('up-arrow');
+
+        let reps = 0;
+        let setsCompleted = 0;
+        const TOTAL_SETS = 4;
+        let handWasClosed = false;
+
+        // 音频上下文（用于合成声音，无需外部文件）
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (type === 'rep') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.2);
+            } else {
+                // Success 旋律
+                [440, 554, 659, 880].forEach((freq, i) => {
+                    const o = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    o.connect(g); g.connect(audioCtx.destination);
+                    o.frequency.value = freq;
+                    g.gain.setValueAtTime(0.1, audioCtx.currentTime + i * 0.1);
+                    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + i * 0.1 + 0.4);
+                    o.start(audioCtx.currentTime + i * 0.1);
+                    o.stop(audioCtx.currentTime + i * 0.1 + 0.4);
+                });
+            }
+        }
+
+        function triggerUpAnimation() {
+            upArrow.classList.remove('bounce-up');
+            void upArrow.offsetWidth; // 触发重绘
+            upArrow.classList.add('bounce-up');
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.restore();
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const hand = results.multiHandLandmarks[0];
+                
+                // 判断逻辑：主要检查四个手指的伸展情况
+                const isFist = hand[8].y > hand[6].y && hand[12].y > hand[10].y && hand[16].y > hand[14].y;
+                const isOpen = hand[8].y < hand[6].y && hand[12].y < hand[10].y && hand[16].y < hand[14].y;
+
+                if (isFist) handWasClosed = true;
+
+                if (handWasClosed && isOpen) {
+                    reps++;
+                    handWasClosed = false;
+                    playSound('rep');
+                    triggerUpAnimation();
+                    updateLogic();
+                }
+            }
+        }
+
+        function updateLogic() {
+            if (reps >= 10) {
+                setsCompleted++;
+                reps = 0;
+                playSound('set');
+                
+                if (setsCompleted < TOTAL_SETS) {
+                    showSetComplete();
+                } else {
+                    showFinalComplete();
+                }
+            }
+            repDisplay.innerText = reps;
+            setDisplay.innerText = TOTAL_SETS - setsCompleted;
+        }
+
+        function showSetComplete() {
+            alertBox.innerHTML = `<span class="thumb-icon">👍</span>Set ${setsCompleted} Done!<br><small>${TOTAL_SETS - setsCompleted} Sets Left</small>`;
+            alertBox.style.display = 'block';
+            setTimeout(() => { alertBox.style.display = 'none'; }, 3000);
+        }
+
+        function showFinalComplete() {
+            alertBox.innerHTML = `<span class="thumb-icon">🏆</span>Excellent!<br>Daily Training Complete`;
+            alertBox.style.display = 'block';
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.75,
+            minTrackingConfidence: 0.75
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        camera.start();
+
+        // 提示点击以激活音频
+        window.addEventListener('click', () => {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }, { once: true });
+
+    </script>
+</body>
+</html>
