@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CyberRain - Gesture Controller</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; width: 100%; height: 100%; }
+        #videoElement { display: none; } /* 隐藏真实的视频流，只用作数据源 */
+        #ui { position: absolute; top: 20px; left: 20px; color: #0ff; z-index: 10; pointer-events: none; text-shadow: 0 0 10px #0ff; }
+        h1 { margin: 0 0 10px 0; font-size: 24px; text-transform: uppercase; letter-spacing: 2px; }
+        #status { font-size: 18px; color: #f0f; text-shadow: 0 0 10px #f0f; }
+        #debug { margin-top: 10px; font-size: 14px; opacity: 0.7; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="ui">
+        <h1>[ CYBER_RAIN_OS ]</h1>
+        <div id="status">INIT CAMERA...</div>
+        <div id="debug">Waiting for hand gestures</div>
+    </div>
+
+    <video id="videoElement" autoplay playsinline></video>
+    <div id="canvas-container"></div>
+
+    <script>
+        // ==========================================
+        // 1. THREE.JS 粒子系统与核心着色器 (Shader)
+        // ==========================================
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.002);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 2000);
+        camera.position.z = 100;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        // 使用加法混合提升霓虹发光感
+        renderer.setClearColor(0x000000, 1);
+        container.appendChild(renderer.domElement);
+
+        const PARTICLE_COUNT = 5000;
+
+        // 生成 TMU 的目标坐标
+        function generateTMUTargets() {
+            const targets = new Float32Array(PARTICLE_COUNT * 3);
+            for(let i = 0; i < PARTICLE_COUNT; i++) {
+                let letter = i % 3;
+                let x = 0, y = 0, z = (Math.random() - 0.5) * 5;
+                let t = Math.random();
+                
+                if (letter === 0) { // T
+                    if (t < 0.3) { x = (Math.random() - 0.5) * 15; y = 15; } // 横
+                    else { x = 0; y = (Math.random() - 0.5) * 30; } // 竖
+                    x -= 25;
+                } else if (letter === 1) { // M
+                    if (t < 0.25) { x = -10; y = (Math.random() - 0.5) * 30; } // 左竖
+                    else if (t < 0.5) { x = 10; y = (Math.random() - 0.5) * 30; } // 右竖
+                    else if (t < 0.75) { x = -10 + Math.random()*10; y = 15 - (x+10)*1.5; } // 左斜
+                    else { x = 0 + Math.random()*10; y = 0 + x*1.5; } // 右斜
+                } else { // U
+                    if (t < 0.4) { x = -10; y = (Math.random() - 0.5) * 30; } // 左竖
+                    else if (t < 0.8) { x = 10; y = (Math.random() - 0.5) * 30; } // 右竖
+                    else { x = (Math.random() - 0.5) * 20; y = -15; } // 底
+                    x += 25;
+                }
+                targets[i * 3] = x;
+                targets[i * 3 + 1] = y;
+                targets[i * 3 + 2] = z;
+            }
+            return targets;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const randoms = new Float32Array(PARTICLE_COUNT);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const targetPositions = generateTMUTargets();
+
+        const colorCyan = new THREE.Color(0x00ffff);
+        const colorMagenta = new THREE.Color(0xff00ff);
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 400; // x
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 400; // y
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 200; // z
+            randoms[i] = Math.random();
+
+            // 霓虹色混合
+            const mixedColor = colorCyan.clone().lerp(colorMagenta, Math.random());
+            colors[i * 3] = mixedColor.r;
+            colors[i * 3 + 1] = mixedColor.g;
+            colors[i * 3 + 2] = mixedColor.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('aTarget', new THREE.BufferAttribute(targetPositions, 3));
+        geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 1));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        // 自定义着色器材质 - 实现引力场、液态变形、时间控制
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                uTime: { value: 0.0 },
+                uSpeed: { value: 1.0 }, // 1=下雨, 0=悬停, -1=倒流
+                uWindX: { value: 0.0 }, // 风向
+                uMorph: { value: 0.0 }  // 0=雨点散落, 1=汇聚成TMU
+            },
+            vertexShader: `
+                uniform float uTime;
+                uniform float uSpeed;
+                uniform float uWindX;
+                uniform float uMorph;
+                
+                attribute vec3 aTarget;
+                attribute float aRandom;
+                attribute vec3 color;
+                
+                varying vec3 vColor;
+                
+                void main() {
+                    vColor = color;
+                    // 雨点模式逻辑
+                    vec3 rainPos = position;
+                    // Y轴掉落
+                    float dropSpeed = aRandom * 50.0 + 50.0;
+                    rainPos.y -= uTime * dropSpeed;
+                    rainPos.y = mod(rainPos.y + 200.0, 400.0) - 200.0; // 循环
+                    // X轴风力
+                    rainPos.x += uWindX * (mod(uTime * 20.0, 100.0));
+                    
+                    // 汇聚到 TMU 的引力场模式 (带有流体扭曲感)
+                    vec3 tmuPos = aTarget;
+                    tmuPos.x += sin(uTime * 2.0 + aTarget.y * 0.1) * 2.0; // 液体扭曲
+                    tmuPos.y += cos(uTime * 2.0 + aTarget.x * 0.1) * 2.0;
+                    tmuPos.z += sin(uTime * 3.0 + aTarget.x) * 5.0;
+
+                    // 插值计算最终位置
+                    vec3 finalPos = mix(rainPos, tmuPos, uMorph);
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+                    // 距离摄像机越近，粒子越大，营造景深
+                    gl_PointSize = (15.0 * aRandom + 5.0) * (100.0 / -mvPosition.z);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                void main() {
+                    // 绘制发光的圆点
+                    vec2 coord = gl_PointCoord - vec2(0.5);
+                    float dist = length(coord);
+                    if (dist > 0.5) discard;
+                    
+                    // 霓虹光晕效果
+                    float alpha = smoothstep(0.5, 0.1, dist);
+                    gl_FragColor = vec4(vColor, alpha);
+                }
+            `,
+            blending: THREE.AdditiveBlending,
+            depthTest: false,
+            transparent: true,
+            vertexColors: true
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // 2. 状态管理与平滑过渡
+        // ==========================================
+        const state = {
+            targetSpeed: 1.0,    // 目标时间倍率
+            targetWindX: 0.0,    // 目标风力
+            targetMorph: 0.0,    // 目标变形状况
+            realTime: 0.0        // 用于着色器的时间累加器
+        };
+
+        const uiStatus = document.getElementById('status');
+        const uiDebug = document.getElementById('debug');
+
+        // ==========================================
+        // 3. MEDIAPIPE 手势识别与逻辑分发
+        // ==========================================
+        const videoElement = document.getElementById('videoElement');
+        let wristHistory = []; // 用于判断动态挥手
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const camera_mp = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        camera_mp.start().then(() => { uiStatus.innerText = "SYSTEM READY / WAITING COMMAND"; });
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                analyzeGesture(landmarks);
+            } else {
+                // 没有手时，逐渐恢复正常降雨
+                state.targetSpeed = 1.0;
+                state.targetWindX = 0.0;
+                state.targetMorph = 0.0;
+                uiStatus.innerText = "SYSTEM READY / DEFAULT RAIN";
+                uiDebug.innerText = "";
+            }
+        }
+
+        function analyzeGesture(landmarks) {
+            const wrist = landmarks[0];
+            const tips = [landmarks[8], landmarks[12], landmarks[16], landmarks[20]]; // 食、中、无名、小指尖
+            const bases = [landmarks[5], landmarks[9], landmarks[13], landmarks[17]]; // 指根
+            
+            // 1. 判断静态手势：张开 vs 握拳
+            let openFingers = 0;
+            for(let i=0; i<4; i++) {
+                // 如果指尖离手腕的距离 > 指根离手腕的距离，视为张开
+                const tipDist = Math.hypot(tips[i].x - wrist.x, tips[i].y - wrist.y);
+                const baseDist = Math.hypot(bases[i].x - wrist.x, bases[i].y - wrist.y);
+                if (tipDist > baseDist * 1.2) openFingers++;
+            }
+
+            const isFist = openFingers <= 1;
+            const isOpen = openFingers >= 4;
+
+            // 2. 追踪手腕动态历史 (计算速度与方向)
+            wristHistory.push(wrist);
+            if(wristHistory.length > 15) wristHistory.shift();
+            
+            let isWavingUp = false, isWavingLeft = false, isWavingRight = false;
+            
+            if (wristHistory.length === 15) {
+                const oldW = wristHistory[0];
+                const dx = wrist.x - oldW.x;
+                const dy = wrist.y - oldW.y; // Y往下是正，往上是负
+                
+                // 阈值判断动态手势 (注意屏幕坐标系)
+                if (dy < -0.15 && Math.abs(dx) < 0.1) isWavingUp = true;
+                if (dx > 0.15 && Math.abs(dy) < 0.1) isWavingLeft = true; // 摄像头是镜像的，x变大是向左挥动
+                if (dx < -0.15 && Math.abs(dy) < 0.1) isWavingRight = true;
+            }
+
+            // 3. 状态机分发 (规则响应)
+            if (isFist) {
+                state.targetMorph = 1.0; // 触发引力场 TMU
+                state.targetSpeed = 1.0; // 内部液体依然有运动感
+                state.targetWindX = 0.0;
+                uiStatus.innerText = "OVERRIDE: GRAVITY FIELD [TMU]";
+                uiStatus.style.color = "#f00";
+            } else if (isWavingUp) {
+                state.targetSpeed = -2.0; // 时间倒流
+                state.targetMorph = 0.0;
+                state.targetWindX = 0.0;
+                uiStatus.innerText = "OVERRIDE: TIME REVERSE";
+                uiStatus.style.color = "#0f0";
+            } else if (isWavingLeft) {
+                state.targetWindX = -2.0; // 风向左
+                state.targetMorph = 0.0;
+                state.targetSpeed = 1.0;
+                uiStatus.innerText = "OVERRIDE: WIND [LEFT]";
+                uiStatus.style.color = "#ff0";
+            } else if (isWavingRight) {
+                state.targetWindX = 2.0; // 风向右
+                state.targetMorph = 0.0;
+                state.targetSpeed = 1.0;
+                uiStatus.innerText = "OVERRIDE: WIND [RIGHT]";
+                uiStatus.style.color = "#ff0";
+            } else if (isOpen) {
+                state.targetSpeed = 0.0; // 时间倍率归零，悬停
+                state.targetMorph = 0.0;
+                state.targetWindX = 0.0;
+                uiStatus.innerText = "OVERRIDE: TIME FROZEN";
+                uiStatus.style.color = "#0ff";
+            } else {
+                // 默认降雨
+                state.targetSpeed = 1.0;
+                state.targetMorph = 0.0;
+                state.targetWindX = 0.0;
+                uiStatus.innerText = "SYSTEM READY / DEFAULT RAIN";
+                uiStatus.style.color = "#f0f";
+            }
+            
+            uiDebug.innerText = `Fingers: ${openFingers} | Speed: ${state.targetSpeed} | Morph: ${state.targetMorph}`;
+        }
+
+        // ==========================================
+        // 4. 渲染循环
+        // ==========================================
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            // 平滑插值 (Lerp) 使得手势切换不会显得突兀
+            material.uniforms.uSpeed.value += (state.targetSpeed - material.uniforms.uSpeed.value) * 0.05;
+            material.uniforms.uWindX.value += (state.targetWindX - material.uniforms.uWindX.value) * 0.05;
+            material.uniforms.uMorph.value += (state.targetMorph - material.uniforms.uMorph.value) * 0.08;
+
+            // 根据当前的播放速度累加时间
+            state.realTime += delta * material.uniforms.uSpeed.value;
+            material.uniforms.uTime.value = state.realTime;
+
+            // 整个粒子系统微弱的旋转，增加 3D 纵深感
+            particleSystem.rotation.y = Math.sin(state.realTime * 0.1) * 0.1;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
